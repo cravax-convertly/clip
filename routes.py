@@ -95,12 +95,12 @@ def start_processing(video_id):
         db.session.commit()
         
         try:
-            # Quick LoL highlight processing with optimized approach  
+            # Advanced LoL highlight processing with HUD detection + OCR + Audio
             from video_processor import VideoProcessor
-            from simple_audio_analyzer import SimpleLoLAnalyzer
+            from highlight_detector import SmartLoLHighlightDetector
             
             processor = VideoProcessor()
-            lol_analyzer = SimpleLoLAnalyzer()
+            smart_detector = SmartLoLHighlightDetector()
             
             # Get basic video info
             video_info = processor.get_video_info(video.file_path)
@@ -109,38 +109,59 @@ def start_processing(video_id):
             
             logger.info(f"Video duration: {video.duration} seconds")
             
-            # For long videos (>30 min), use fast processing 
-            if video.duration > 1800:  # 30 minutes
-                highlight_moments = lol_analyzer.detect_lol_highlights_fast(video.file_path)
+            # Use advanced detection with HUD verification
+            if video.duration > 1800:  # 30 minutes - use fast detection
+                highlight_moments = smart_detector.detect_highlights_fast(video.file_path)
             else:
-                highlight_moments = lol_analyzer.detect_lol_highlights(video.file_path)
+                highlight_moments = smart_detector.detect_smart_highlights(video.file_path)
             
-            logger.info(f"Found {len(highlight_moments)} highlight moments")
+            logger.info(f"Found {len(highlight_moments)} verified highlights")
             
-            # Create clip metadata only (no actual video processing to avoid timeout)
+            # Create actual working clips with verification
             clips_created = 0
-            max_clips = min(5, len(highlight_moments))  # Limit to 5 clips
+            max_clips = min(3, len(highlight_moments))  # Limit to 3 clips to prevent timeout
             for i, moment in enumerate(highlight_moments[:max_clips]):
                 try:
-                    # Create database record for the clip (metadata only)
-                    video_clip = VideoClip()
-                    video_clip.video_upload_id = video_id
-                    video_clip.filename = f"clip_{video_id}_{i+1}_{moment['type']}.mp4"
-                    video_clip.file_path = f"temp/clip_{video_id}_{i+1}_{moment['type']}.mp4"
-                    video_clip.start_time = moment['start_time']
-                    video_clip.end_time = moment['end_time']
-                    video_clip.duration = moment['duration']
-                    video_clip.audio_spike_score = moment.get('excitement_score', 0.5)
-                    video_clip.detection_reason = moment.get('detection_reason', 'Audio analysis')
-                    video_clip.is_selected = True
+                    # Create a shorter, more manageable clip
+                    clip_duration = min(30, moment['duration'])  # Max 30 seconds
+                    clip_start = moment['start_time']
+                    clip_end = clip_start + clip_duration
                     
-                    db.session.add(video_clip)
-                    clips_created += 1
+                    clip_filename = f"clip_{video_id}_{i+1}_{moment['type']}.mp4"
                     
-                    logger.info(f"Registered clip {i+1}: {moment['start_time']:.1f}s - {moment['end_time']:.1f}s")
+                    logger.info(f"Creating clip {i+1}: {clip_start:.1f}s - {clip_end:.1f}s ({clip_duration}s)")
                     
+                    # Extract the clip now
+                    clip_path = processor.extract_clip(
+                        video.file_path,
+                        clip_start,
+                        clip_end,
+                        clip_filename
+                    )
+                    
+                    # Verify the clip was created successfully
+                    if clip_path and os.path.exists(clip_path) and os.path.getsize(clip_path) > 1000:  # At least 1KB
+                        # Create database record for the verified clip
+                        video_clip = VideoClip()
+                        video_clip.video_upload_id = video_id
+                        video_clip.filename = clip_filename
+                        video_clip.file_path = clip_path
+                        video_clip.start_time = clip_start
+                        video_clip.end_time = clip_end
+                        video_clip.duration = clip_duration
+                        video_clip.audio_spike_score = moment.get('excitement_score', 0.5)
+                        video_clip.detection_reason = moment.get('detection_reason', 'Smart detection')
+                        video_clip.is_selected = True
+                        
+                        db.session.add(video_clip)
+                        clips_created += 1
+                        
+                        logger.info(f"Successfully created clip {i+1}: {os.path.getsize(clip_path)} bytes")
+                    else:
+                        logger.error(f"Clip {i+1} creation failed or file too small")
+                        
                 except Exception as clip_error:
-                    logger.error(f"Failed to register clip {i+1}: {str(clip_error)}")
+                    logger.error(f"Failed to create clip {i+1}: {str(clip_error)}")
                     continue
             
             # Update video status
@@ -286,6 +307,102 @@ def download_clip(clip_id):
     except Exception as e:
         logger.error(f"Error downloading clip: {str(e)}")
         abort(500, f"Download failed: {str(e)}")
+
+@app.route('/download/clip/<int:clip_id>/vertical')
+def download_vertical_clip(clip_id):
+    """Download a vertical social media ready clip"""
+    try:
+        clip = VideoClip.query.get_or_404(clip_id)
+        video = VideoUpload.query.get_or_404(clip.video_upload_id)
+        
+        # Create vertical version filename
+        vertical_filename = f"vertical_{clip.filename}"
+        vertical_path = os.path.join("temp", vertical_filename)
+        
+        # Check if vertical version exists
+        if not os.path.exists(vertical_path):
+            logger.info(f"Creating vertical clip {clip_id}")
+            
+            from video_processor import VideoProcessor
+            processor = VideoProcessor()
+            
+            try:
+                # Extract vertical clip directly
+                vertical_path = processor.extract_vertical_clip(
+                    video.file_path,
+                    clip.start_time,
+                    clip.end_time,
+                    vertical_filename
+                )
+                
+                # Add watermark
+                watermarked_filename = f"watermarked_{vertical_filename}"
+                watermarked_path = processor.add_watermark(vertical_path, watermarked_filename)
+                
+                if watermarked_path != vertical_path:
+                    vertical_path = watermarked_path
+                
+            except Exception as create_error:
+                logger.error(f"Failed to create vertical clip {clip_id}: {str(create_error)}")
+                abort(500, f"Failed to create vertical clip: {str(create_error)}")
+        
+        return send_file(
+            vertical_path,
+            as_attachment=True,
+            download_name=vertical_filename
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading vertical clip: {str(e)}")
+        abort(500, f"Vertical download failed: {str(e)}")
+
+@app.route('/debug/events/<int:video_id>')
+def debug_events(video_id):
+    """Debug endpoint to view detected events for a video"""
+    try:
+        video = VideoUpload.query.get_or_404(video_id)
+        
+        if not os.path.exists(video.file_path):
+            return jsonify({'error': 'Video file not found'}), 404
+        
+        from highlight_detector import SmartLoLHighlightDetector
+        detector = SmartLoLHighlightDetector()
+        
+        # Get all detection components
+        gameplay_periods = detector.hud_detector.analyze_gameplay_periods(video.file_path)
+        kill_events = detector.kill_detector.detect_kill_events(video.file_path)
+        audio_moments = detector.audio_analyzer.detect_lol_highlights(video.file_path)
+        
+        # Run full smart detection
+        highlights = detector.detect_smart_highlights(video.file_path)
+        
+        debug_info = {
+            'video_id': video_id,
+            'video_duration': video.duration,
+            'gameplay_periods': gameplay_periods,
+            'kill_events': kill_events,
+            'audio_moments': [
+                {
+                    'start_time': m['start_time'],
+                    'end_time': m['end_time'],
+                    'excitement_score': m.get('excitement_score', 0),
+                    'type': m.get('type', 'unknown')
+                } for m in audio_moments
+            ],
+            'final_highlights': highlights,
+            'processing_summary': {
+                'gameplay_periods_found': len(gameplay_periods),
+                'kill_events_detected': len(kill_events),
+                'audio_moments_detected': len(audio_moments),
+                'final_highlights_generated': len(highlights)
+            }
+        }
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        logger.error(f"Error debugging events: {str(e)}")
+        return jsonify({'error': f'Debug failed: {str(e)}'}), 500
 
 @app.route('/download/selected/<int:video_id>')
 def download_selected_clips(video_id):

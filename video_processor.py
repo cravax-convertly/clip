@@ -55,27 +55,23 @@ class VideoProcessor:
             output_path = os.path.join(self.temp_folder, output_filename)
             duration = end_time - start_time
             
-            # Use ffmpeg for fast, accurate extraction with optimized settings
+            # Use the working ffmpeg pattern with input seeking for speed
+            duration = min(duration, 15)  # Max 15 seconds to prevent timeout
             cmd = [
                 'ffmpeg', '-y',  # Overwrite output files
+                '-ss', str(start_time),  # Seek first (faster)
                 '-i', video_path,
-                '-ss', str(start_time),
                 '-t', str(duration),
-                '-c:v', 'libx264',
-                '-c:a', 'aac',
-                '-preset', 'ultrafast',  # Faster preset
-                '-crf', '28',  # Lower quality for speed
                 output_path
             ]
             
-            # Add timeout to prevent hanging
-            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=8)
             logger.info(f"Extracted clip: {output_filename}")
             return output_path
             
         except subprocess.TimeoutExpired:
             logger.error(f"Timeout extracting clip: {output_filename}")
-            raise Exception(f"Clip extraction timed out after 30 seconds")
+            raise Exception(f"Clip extraction timed out after 20 seconds")
         except subprocess.CalledProcessError as e:
             logger.error(f"Error extracting clip: {e.stderr.decode() if e.stderr else str(e)}")
             raise Exception(f"Failed to extract clip: {str(e)}")
@@ -83,6 +79,61 @@ class VideoProcessor:
             logger.error(f"Unexpected error extracting clip: {str(e)}")
             raise Exception(f"Failed to extract clip: {str(e)}")
     
+    def extract_vertical_clip(self, video_path, start_time, end_time, output_filename):
+        """Extract and convert clip to vertical 9:16 format for social media"""
+        try:
+            output_path = os.path.join(self.temp_folder, output_filename)
+            duration = end_time - start_time
+            
+            # Use ffmpeg to create vertical clip with proper scaling
+            cmd = [
+                'ffmpeg', '-y',  # Overwrite output files
+                '-i', video_path,
+                '-ss', str(start_time),
+                '-t', str(duration),
+                '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black',
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-preset', 'fast',
+                '-crf', '23',
+                output_path
+            ]
+            
+            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+            logger.info(f"Created vertical clip: {output_filename}")
+            return output_path
+            
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout creating vertical clip: {output_filename}")
+            raise Exception(f"Vertical clip creation timed out")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error creating vertical clip: {e.stderr.decode() if e.stderr else str(e)}")
+            raise Exception(f"Failed to create vertical clip: {str(e)}")
+    
+    def add_watermark(self, video_path, output_filename, watermark_text="ClipForge"):
+        """Add watermark to video"""
+        try:
+            output_path = os.path.join(self.temp_folder, output_filename)
+            
+            # Use ffmpeg to add text watermark
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', video_path,
+                '-vf', f"drawtext=text='{watermark_text}':fontcolor=white:fontsize=24:x=10:y=10:alpha=0.7",
+                '-c:a', 'copy',
+                '-preset', 'fast',
+                output_path
+            ]
+            
+            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+            logger.info(f"Added watermark to: {output_filename}")
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"Error adding watermark: {str(e)}")
+            # Return original path if watermark fails
+            return video_path
+
     def convert_to_vertical(self, video_path):
         """Convert video to vertical 9:16 format for social media"""
         try:

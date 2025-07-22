@@ -121,20 +121,26 @@ The application uses a multi-stage video processing pipeline:
 - **Architecture**: Simplified to synchronous processing for reliability
 - **Templates**: Fixed JavaScript rendering issues and upload functionality
 
-### July 22, 2025 - LoL Highlight Detection System
-- **Major Feature**: Implemented research-based League of Legends highlight detection system
-- **Audio Analysis**: Created SimpleLoLAnalyzer with 4 detection methods:
-  - Volume spike detection for teamfights (3x threshold above baseline)
-  - Audio density analysis for combat periods using spectral analysis
-  - Action transition detection (quiet-to-loud moments)
-  - Fallback periodic sampling for reliability
-- **Fixed Critical Issues**:
-  - Resolved Redis/Celery memory crashes by switching to synchronous processing
-  - Fixed automatic processing trigger - now requires manual "Start Processing" button
-  - Removed librosa dependency causing worker crashes
-  - Fixed dashboard Redis import error
-- **Real Clip Generation**: System now creates actual video files using ffmpeg extraction
-- **Database Integration**: Clips properly saved with metadata (excitement scores, detection reasons)
-- **Performance**: Lightweight analysis (first 60 seconds) to avoid memory issues
-- **File Handling**: Increased upload limit to 2GB for long stream recordings
-- **User Experience**: Manual processing control, better error handling
+### July 22, 2025 - Advanced LoL Pattern Recognition System
+- **Revolutionary Enhancement**: Implemented multi-signal League of Legends highlight detection
+- **HUD Detection System**: Added computer vision-based gameplay period detection
+  - Analyzes video frames to detect LoL HUD elements (minimap, abilities, kill feed)
+  - Ensures clips only generated during actual gameplay (no menus/loading screens)
+  - Uses OpenCV color detection and template matching
+- **Enhanced OCR Kill Feed Detection**: 
+  - Scans top-left kill feed region for event keywords
+  - Detects multi-kills, shutdowns, objectives (baron, dragon, turret)
+  - Only processes frames during verified gameplay periods
+- **Smart Signal Correlation**: 
+  - Combines HUD detection + OCR events + audio spikes
+  - Only creates clips when multiple signals confirm highlight moments
+  - Advanced scoring system prioritizing multi-kills and team fights
+- **Social Media Ready Output**:
+  - Vertical 9:16 video conversion for TikTok/Instagram/YouTube Shorts
+  - Automatic watermarking with ClipForge branding
+  - On-demand clip extraction to avoid timeout issues
+- **Performance Optimizations**:
+  - Reduced clip extraction timeout from 30s to 20s
+  - Smart gameplay period detection to avoid false positives
+  - Debug endpoint (/debug/events/) for detection analysis
+- **User Experience**: Enhanced dashboard with vertical download options and pattern-verified highlights

@@ -48,17 +48,4 @@ class VideoClip(db.Model):
     
     created_at = db.Column(DateTime, default=datetime.utcnow)
 
-class ProcessingJob(db.Model):
-    id = db.Column(Integer, primary_key=True)
-    video_upload_id = db.Column(Integer, db.ForeignKey('video_upload.id'), nullable=False)
-    task_id = db.Column(String(255), nullable=False)
-    status = db.Column(String(50), default='pending')  # pending, running, completed, failed
-    progress = db.Column(Float, default=0.0)
-    current_step = db.Column(String(100))
-    error_message = db.Column(Text)
-    started_at = db.Column(DateTime, default=datetime.utcnow)
-    completed_at = db.Column(DateTime)
-    
-    # Processing statistics
-    total_clips_found = db.Column(Integer, default=0)
-    clips_processed = db.Column(Integer, default=0)
+# ProcessingJob model removed - using simplified processing without Celery

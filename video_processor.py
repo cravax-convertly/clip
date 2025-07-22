@@ -50,12 +50,12 @@ class VideoProcessor:
             return {'duration': 0, 'width': 0, 'height': 0, 'fps': 30}
     
     def extract_clip(self, video_path, start_time, end_time, output_filename):
-        """Extract a clip from the video using ffmpeg"""
+        """Extract a clip from the video using ffmpeg with timeout"""
         try:
             output_path = os.path.join(self.temp_folder, output_filename)
             duration = end_time - start_time
             
-            # Use ffmpeg for fast, accurate extraction
+            # Use ffmpeg for fast, accurate extraction with optimized settings
             cmd = [
                 'ffmpeg', '-y',  # Overwrite output files
                 '-i', video_path,
@@ -63,16 +63,24 @@ class VideoProcessor:
                 '-t', str(duration),
                 '-c:v', 'libx264',
                 '-c:a', 'aac',
-                '-preset', 'fast',
+                '-preset', 'ultrafast',  # Faster preset
+                '-crf', '28',  # Lower quality for speed
                 output_path
             ]
             
-            subprocess.run(cmd, check=True, capture_output=True)
+            # Add timeout to prevent hanging
+            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
             logger.info(f"Extracted clip: {output_filename}")
             return output_path
             
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout extracting clip: {output_filename}")
+            raise Exception(f"Clip extraction timed out after 30 seconds")
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error extracting clip: {e.stderr.decode()}")
+            logger.error(f"Error extracting clip: {e.stderr.decode() if e.stderr else str(e)}")
+            raise Exception(f"Failed to extract clip: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error extracting clip: {str(e)}")
             raise Exception(f"Failed to extract clip: {str(e)}")
     
     def convert_to_vertical(self, video_path):

@@ -5,8 +5,7 @@ from datetime import datetime
 from flask import render_template, request, jsonify, send_file, abort, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 from app import app, db
-from models import VideoUpload, VideoClip, ProcessingJob
-from tasks import process_video_task
+from models import VideoUpload, VideoClip
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +95,7 @@ def start_processing(video_id):
         db.session.commit()
         
         try:
-            # Real LoL highlight processing (using simple analyzer to avoid memory issues)
+            # Quick LoL highlight processing with optimized approach  
             from video_processor import VideoProcessor
             from simple_audio_analyzer import SimpleLoLAnalyzer
             
@@ -110,44 +109,38 @@ def start_processing(video_id):
             
             logger.info(f"Video duration: {video.duration} seconds")
             
-            # Detect LoL highlights using reliable audio analysis
-            highlight_moments = lol_analyzer.detect_lol_highlights(video.file_path)
+            # For long videos (>30 min), use fast processing 
+            if video.duration > 1800:  # 30 minutes
+                highlight_moments = lol_analyzer.detect_lol_highlights_fast(video.file_path)
+            else:
+                highlight_moments = lol_analyzer.detect_lol_highlights(video.file_path)
             
             logger.info(f"Found {len(highlight_moments)} highlight moments")
             
-            # Create actual video clips
+            # Create clip metadata only (no actual video processing to avoid timeout)
             clips_created = 0
-            for i, moment in enumerate(highlight_moments):
+            max_clips = min(5, len(highlight_moments))  # Limit to 5 clips
+            for i, moment in enumerate(highlight_moments[:max_clips]):
                 try:
-                    # Create the actual clip file
-                    clip_filename = f"clip_{video_id}_{i+1}_{moment['type']}.mp4"
-                    clip_path = processor.extract_clip(
-                        video.file_path,
-                        moment['start_time'],
-                        moment['end_time'],
-                        clip_filename
-                    )
+                    # Create database record for the clip (metadata only)
+                    video_clip = VideoClip()
+                    video_clip.video_upload_id = video_id
+                    video_clip.filename = f"clip_{video_id}_{i+1}_{moment['type']}.mp4"
+                    video_clip.file_path = f"temp/clip_{video_id}_{i+1}_{moment['type']}.mp4"
+                    video_clip.start_time = moment['start_time']
+                    video_clip.end_time = moment['end_time']
+                    video_clip.duration = moment['duration']
+                    video_clip.audio_spike_score = moment.get('excitement_score', 0.5)
+                    video_clip.detection_reason = moment.get('detection_reason', 'Audio analysis')
+                    video_clip.is_selected = True
                     
-                    if clip_path and os.path.exists(clip_path):
-                        # Create database record for the clip
-                        video_clip = VideoClip()
-                        video_clip.video_upload_id = video_id
-                        video_clip.filename = clip_filename
-                        video_clip.file_path = clip_path
-                        video_clip.start_time = moment['start_time']
-                        video_clip.end_time = moment['end_time']
-                        video_clip.duration = moment['duration']
-                        video_clip.audio_spike_score = moment['excitement_score']
-                        video_clip.detection_reason = moment['detection_reason']
-                        video_clip.is_selected = True
-                        
-                        db.session.add(video_clip)
-                        clips_created += 1
-                        
-                        logger.info(f"Created clip {i+1}: {moment['start_time']:.1f}s - {moment['end_time']:.1f}s")
+                    db.session.add(video_clip)
+                    clips_created += 1
+                    
+                    logger.info(f"Registered clip {i+1}: {moment['start_time']:.1f}s - {moment['end_time']:.1f}s")
                     
                 except Exception as clip_error:
-                    logger.error(f"Failed to create clip {i+1}: {str(clip_error)}")
+                    logger.error(f"Failed to register clip {i+1}: {str(clip_error)}")
                     continue
             
             # Update video status
@@ -156,7 +149,7 @@ def start_processing(video_id):
             video.clips_generated = clips_created
             db.session.commit()
             
-            logger.info(f"LoL processing completed for video {video_id}: {clips_created} clips created")
+            logger.info(f"LoL processing completed for video {video_id}: {clips_created} clips created from {max_clips} attempted")
             
         except Exception as e:
             video.processing_status = 'failed'
@@ -189,16 +182,7 @@ def get_processing_status(video_id):
             'error_message': video.error_message
         }
         
-        # If processing, get detailed task status
-        if video.processing_status == 'processing' and video.task_id:
-            job = ProcessingJob.query.filter_by(task_id=video.task_id).first()
-            if job:
-                result.update({
-                    'current_step': job.current_step,
-                    'progress': job.progress,
-                    'total_clips_found': job.total_clips_found,
-                    'clips_processed': job.clips_processed
-                })
+        # Processing status is handled directly by video record now
         
         return jsonify(result)
         
@@ -260,12 +244,34 @@ def toggle_clip_selection(clip_id):
 
 @app.route('/download/clip/<int:clip_id>')
 def download_clip(clip_id):
-    """Download a specific clip"""
+    """Download a specific clip - extract on demand"""
     try:
         clip = VideoClip.query.get_or_404(clip_id)
+        video = VideoUpload.query.get_or_404(clip.video_upload_id)
         
+        # Check if clip file already exists
         if not os.path.exists(clip.file_path):
-            abort(404, "Clip file not found")
+            logger.info(f"Extracting clip {clip_id} on demand")
+            
+            # Extract the clip now
+            from video_processor import VideoProcessor
+            processor = VideoProcessor()
+            
+            try:
+                clip_path = processor.extract_clip(
+                    video.file_path,
+                    clip.start_time,
+                    clip.end_time,
+                    clip.filename
+                )
+                
+                # Update the clip path in database
+                clip.file_path = clip_path
+                db.session.commit()
+                
+            except Exception as extract_error:
+                logger.error(f"Failed to extract clip {clip_id}: {str(extract_error)}")
+                abort(500, f"Failed to extract clip: {str(extract_error)}")
         
         # Mark as downloaded
         clip.is_downloaded = True
